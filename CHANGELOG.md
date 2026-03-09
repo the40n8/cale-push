@@ -5,6 +5,16 @@ Toutes les modifications notables de ce projet sont documentées ici.
 Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 Ce projet suit le [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-03-10
+
+### Ajouté
+
+- `install --interval <durée>` : intervalle personnalisé pour le timer systemd (ex. `30min`, `1h`)
+- `install --cron <expression>` : installe une entrée crontab standard au lieu du timer systemd (ex. `"*/30 * * * *"`)
+- `uninstall` détecte et supprime automatiquement les deux méthodes (systemd et crontab)
+
+---
+
 ## [0.1.0] - 2025-03-09
 
 Version bêta initiale — publiée pour trouver des testeurs.

@@ -133,11 +133,19 @@ Un fichier `config.local` à côté du script permet des overrides locaux (ignor
 ./cale-push update
 ```
 
-### Service automatique (systemd)
+### Service automatique
+
+Deux méthodes selon votre environnement :
+
+**Systemd** (Linux standard) :
 
 ```bash
-# Installer le timer (toutes les 10 minutes)
+# Installer le timer (toutes les 10 minutes par défaut)
 ./cale-push install movies
+
+# Intervalle personnalisé (syntaxe systemd)
+./cale-push install movies --interval 30min
+./cale-push install all --interval 1h
 
 # Voir les logs
 journalctl --user -u cale-push -f
@@ -146,13 +154,21 @@ journalctl --user -u cale-push -f
 ./cale-push uninstall
 ```
 
-Ou manuellement avec les fichiers dans `systemd/`.
-
-**Sur NAS (sans systemd) :** utilisez un cron à la place :
+**Cron** (NAS, conteneurs, ou préférence utilisateur) :
 
 ```bash
-*/10 * * * * /path/to/cale-push push all >> /var/log/cale-push.log 2>&1
+# Installer une entrée crontab (syntaxe cron standard)
+./cale-push install movies --cron "*/10 * * * *"
+./cale-push install series --cron "*/30 * * * *"
+
+# Voir les entrées installées
+crontab -l
+
+# Désinstaller (retire aussi bien systemd que cron)
+./cale-push uninstall
 ```
+
+Ou manuellement avec les fichiers dans `systemd/`.
 
 ### Docker (NAS)
 

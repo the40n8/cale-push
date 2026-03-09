@@ -388,7 +388,27 @@ cmd_preview() {
 cmd_install() {
     local script_path
     script_path="$(cd "${LACALE_DIR}" && pwd)/cale-push"
-    local mode="${1:-movies}"
+    local mode="movies"
+    local interval="10min"
+    local cron_expr=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --interval) interval="$2"; shift 2 ;;
+            --cron)     cron_expr="$2"; shift 2 ;;
+            *)          mode="$1"; shift ;;
+        esac
+    done
+
+    if [[ -n "$cron_expr" ]]; then
+        _install_cron "$script_path" "$mode" "$cron_expr"
+    else
+        _install_systemd "$script_path" "$mode" "$interval"
+    fi
+}
+
+_install_systemd() {
+    local script_path="$1" mode="$2" interval="$3"
 
     log "Installing systemd service for user: $(whoami)"
 
@@ -412,7 +432,7 @@ Description=cale-push timer
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=10min
+OnUnitActiveSec=${interval}
 Persistent=true
 
 [Install]
@@ -429,14 +449,45 @@ EOF
     log "  Remove:  ./cale-push uninstall"
 }
 
+_install_cron() {
+    local script_path="$1" mode="$2" cron_expr="$3"
+    local cron_entry="${cron_expr} /bin/bash ${script_path} push ${mode}"
+
+    log "Installing crontab entry for user: $(whoami)"
+
+    (crontab -l 2>/dev/null | grep -v "${script_path}"; echo "${cron_entry}") | crontab -
+
+    log "Crontab entry installed: ${cron_expr}"
+    log "  View:    crontab -l"
+    log "  Logs:    check your syslog or mail"
+    log "  Remove:  ./cale-push uninstall"
+}
+
 cmd_uninstall() {
-    log "Removing systemd service..."
-    systemctl --user stop cale-push.timer 2>/dev/null || true
-    systemctl --user disable cale-push.timer 2>/dev/null || true
-    rm -f "$HOME/.config/systemd/user/cale-push.service"
-    rm -f "$HOME/.config/systemd/user/cale-push.timer"
-    systemctl --user daemon-reload
-    log "Service removed."
+    local script_path removed=0
+    script_path="$(cd "${LACALE_DIR}" && pwd)/cale-push"
+
+    if [[ -f "$HOME/.config/systemd/user/cale-push.timer" ]]; then
+        log "Removing systemd service..."
+        systemctl --user stop cale-push.timer 2>/dev/null || true
+        systemctl --user disable cale-push.timer 2>/dev/null || true
+        rm -f "$HOME/.config/systemd/user/cale-push.service"
+        rm -f "$HOME/.config/systemd/user/cale-push.timer"
+        systemctl --user daemon-reload
+        removed=1
+    fi
+
+    if crontab -l 2>/dev/null | grep -q "${script_path}"; then
+        log "Removing crontab entry..."
+        crontab -l 2>/dev/null | grep -v "${script_path}" | crontab -
+        removed=1
+    fi
+
+    if [[ $removed -eq 0 ]]; then
+        log "Nothing to remove."
+    else
+        log "Service removed."
+    fi
 }
 
 cmd_update() {
@@ -682,8 +733,10 @@ COMMANDS:
     preview <filename>
         Preview the release name that would be generated for a file.
 
-    install [movies|series|all]
-        Install a systemd user timer (runs every 10 min).
+    install [movies|series|all] [--interval <duration>] [--cron <expression>]
+        Install a scheduled job (default: systemd timer, every 10min).
+        --interval: systemd time span (e.g. 10min, 30min, 1h).
+        --cron:     standard cron expression (e.g. "*/30 * * * *"); installs a crontab entry.
 
     uninstall
         Remove the systemd timer.
@@ -726,7 +779,9 @@ EXAMPLES:
     ./cale-push search 257088            # Search by TMDB ID
     ./cale-push search "Inception"       # Search by title
     ./cale-push preview "Movie.2024.MULTi.1080p.BluRay.x264-GRP.mkv"
-    ./cale-push install movies           # Auto-push every 10min
+    ./cale-push install movies                          # Auto-push every 10min (systemd)
+    ./cale-push install movies --interval 30min         # Auto-push every 30min (systemd)
+    ./cale-push install series --cron "*/30 * * * *"    # Auto-push every 30min (cron)
     ./cale-push update                   # Update to latest version
 EOF
 }
