@@ -1,0 +1,8 @@
+.git
+.gitignore
+*.md
+!lib/*.sh
+config.local
+config/
+.shellcheckrc
+LICENSE

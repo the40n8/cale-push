@@ -1,0 +1,16 @@
+config.local
+*.torrent
+*.nfo
+*.log
+
+# Never commit actual config (only config.example)
+/config
+
+# Claude Code session data
+.claude/
+
+# macOS
+.DS_Store
+
+# Temp work directories created by cale-push at runtime
+/tmp/lacale_upload_*

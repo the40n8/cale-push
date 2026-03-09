@@ -1,0 +1,9 @@
+# ShellCheck configuration for cale-push
+# See: https://www.shellcheck.net/wiki/
+
+# Allow sourcing files that may not exist at lint time
+external-sources=true
+
+# Allow using variables set in sourced files
+# SC2154: var is referenced but not assigned (set by sourced config/libs)
+disable=SC2154

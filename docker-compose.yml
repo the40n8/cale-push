@@ -1,0 +1,55 @@
+# docker-compose.yml - cale-push containerized setup
+#
+# Usage:
+#   docker compose run --rm cale-push check          # Validate config
+#   docker compose run --rm cale-push scan movies     # Scan candidates
+#   docker compose run --rm cale-push push movies     # Push content
+#   docker compose up -d                              # Run as service (timer)
+#
+# See docs/docker.md for full documentation.
+
+services:
+  cale-push:
+    build: .
+    image: cale-push:latest
+    container_name: cale-push
+    restart: "no"
+    volumes:
+      # Config directory - contains your config, cache, history, exclude list
+      - ./config:/config
+
+      # Media library - mount your films/series root (read-only)
+      # Adjust the left side to match your actual media path
+      - /path/to/media:/media:ro
+
+      # Torrent output - where .torrent files are saved
+      # Must be accessible by your torrent client
+      - /path/to/torrents:/torrents
+
+    # Override default paths in your config:
+    #   RADARR_URL, SONARR_URL → use host.docker.internal or your LAN IP
+    #   Paths returned by Radarr/Sonarr must be remapped (see PATH_MAP below)
+    environment:
+      - TZ=Europe/Paris
+
+  # Automatic service mode - runs push every 10 minutes
+  cale-push-timer:
+    build: .
+    image: cale-push:latest
+    container_name: cale-push-timer
+    restart: unless-stopped
+    volumes:
+      - ./config:/config
+      - /path/to/media:/media:ro
+      - /path/to/torrents:/torrents
+    environment:
+      - TZ=Europe/Paris
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "cale-push timer started (every 10 minutes)"
+        while true; do
+          /opt/cale-push/cale-push push all 2>&1 | tee -a /config/cale-push.log
+          echo "--- Sleeping 10 minutes ---"
+          sleep 600
+        done

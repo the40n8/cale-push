@@ -1,0 +1,10 @@
+[Unit]
+Description=cale-push - Auto upload to La Cale
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust the path below to where you cloned the repo
+ExecStart=/bin/bash /opt/cale-push/cale-push push all
+TimeoutStartSec=1800

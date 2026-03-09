@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# cale-push configuration
+# Copy this file to ~/.config/lacale/config and fill in your values.
+#
+# You can also place a 'config.local' file next to the cale-push script
+# for project-specific overrides.
+#
+# API docs: https://la-cale.space/faq/api
+
+# =============================================================================
+# LA CALE (required)
+# =============================================================================
+LACALE_URL="https://la-cale.space"
+LACALE_API_KEY=""           # API key from La Cale settings (needed for search)
+TRACKER_URL=""              # Your personal announce URL with passkey
+
+# =============================================================================
+# UPLOAD METHOD
+# =============================================================================
+# "internal" : session login via email/password (works now, used by default)
+# "external" : external API with upload:write scope (use when available)
+UPLOAD_METHOD="internal"
+
+# Credentials for the internal uploader (session login)
+LACALE_EMAIL=""
+LACALE_PASSWORD=""
+
+# Browser User-Agent (used by internal uploader to pass Cloudflare checks)
+# BROWSER_UA="Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"
+
+# Category IDs (auto-resolved from API if empty — override only if needed)
+# CAT_MOVIES=""
+# CAT_SERIES=""
+
+# =============================================================================
+# RADARR (required for movies)
+# =============================================================================
+RADARR_URL="http://127.0.0.1:7878/radarr"
+RADARR_API_KEY=""
+
+# =============================================================================
+# SONARR (required for series)
+# =============================================================================
+SONARR_URL="http://127.0.0.1:8989/sonarr"
+SONARR_API_KEY=""
+
+# =============================================================================
+# TORRENT CLIENT
+# =============================================================================
+# Available providers: transmission, qbittorrent
+# Create your own in providers/ (see providers/example.sh)
+TORRENT_PROVIDER="transmission"
+
+# Transmission-specific config
+TRANSMISSION_HOST="127.0.0.1:9091"
+TRANSMISSION_AUTH="user:password"
+
+# qBittorrent-specific config
+# QBIT_HOST="127.0.0.1:8080"
+# QBIT_USER="admin"
+# QBIT_PASS="adminadmin"
+
+# =============================================================================
+# UPLOAD BEHAVIOR
+# =============================================================================
+# Max uploads per run
+MAX_UPLOADS=5
+
+# Cache TTLs (seconds)
+CACHE_TTL_PRESENT=86400     # 24h for content already on La Cale
+CACHE_TTL_ABSENT=21600      # 6h for content not yet on La Cale
+
+# Minimum quality to push (leave empty for all)
+# Options: 480p, 720p, 1080p, 2160p
+# MIN_QUALITY=""
+
+# Max API retries on failure (with exponential backoff)
+MAX_RETRIES=3
+
+# =============================================================================
+# RATE LIMITING
+# =============================================================================
+# Delay between uploads in seconds (API limit: 30/min)
+UPLOAD_DELAY=2
+
+# Delay between search API calls in seconds (cache: ~30s server-side)
+SEARCH_DELAY=0.3
+
+# =============================================================================
+# PATHS
+# =============================================================================
+HISTORY_FILE="$HOME/.lacale_uploaded.txt"
+CACHE_FILE="$HOME/.lacale_cache.tsv"
+
+# Path mapping: remap Radarr/Sonarr paths to local filesystem paths
+# Useful when running in Docker or when Radarr runs in a container with different mount points
+# Format: "radarr_path:local_path" — multiple mappings separated by commas
+# Example: "/movies:/media/movies,/tv:/media/tv"
+# PATH_MAP=""
+
+# Log file (leave empty to disable file logging)
+# Recommended for systemd: LOG_FILE="$HOME/.local/share/lacale/cale-push.log"
+# LOG_FILE=""
+
+# Exclude file: one TMDB ID or title per line (lines starting with # are ignored)
+# EXCLUDE_FILE="$HOME/.config/lacale/exclude"
+
+# =============================================================================
+# NOTIFICATIONS (optional)
+# =============================================================================
+# Comma-separated list of enabled notifiers: discord, email, telegram
+# Leave empty to disable notifications
+NOTIFY_ENABLED=""
+
+# Discord webhook
+# DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+
+# Email (requires 'mail' command)
+# NOTIFY_EMAIL_TO="you@example.com"
+# NOTIFY_EMAIL_FROM="cale-push@localhost"
+
+# Telegram bot
+# TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
+# TELEGRAM_CHAT_ID="-1001234567890"

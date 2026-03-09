@@ -1,0 +1,771 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  cale-push - Scan your Radarr/Sonarr library and push to La Cale
+#
+#  Usage: ./cale-push <command> [options]
+#  Run './cale-push help' for available commands.
+# =============================================================================
+set -euo pipefail
+
+LACALE_VERSION="0.1.0"
+LACALE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ---- Source libraries ----
+for lib in core cache naming tags api radarr sonarr notify; do
+    source "${LACALE_DIR}/lib/${lib}.sh"
+done
+
+# ---- Config loading ----
+load_config() {
+    local config_loaded=false
+
+    # 1. Default config location
+    if [ -f "$HOME/.config/lacale/config" ]; then
+        source "$HOME/.config/lacale/config"
+        config_loaded=true
+    fi
+
+    # 2. Project-local override
+    if [ -f "${LACALE_DIR}/config.local" ]; then
+        source "${LACALE_DIR}/config.local"
+        config_loaded=true
+    fi
+
+    # 3. Custom config via --config flag
+    if [ -n "${LACALE_CONFIG:-}" ] && [ -f "$LACALE_CONFIG" ]; then
+        source "$LACALE_CONFIG"
+        config_loaded=true
+    fi
+
+    if ! $config_loaded; then
+        die "No config found. Copy config.example to ~/.config/lacale/config and fill in your values."
+    fi
+
+    # Defaults for optional values
+    : "${LACALE_URL:=https://la-cale.space}"
+    : "${MAX_UPLOADS:=5}"
+    : "${CACHE_TTL_PRESENT:=86400}"
+    : "${CACHE_TTL_ABSENT:=21600}"
+    : "${HISTORY_FILE:=$HOME/.lacale_uploaded.txt}"
+    : "${CACHE_FILE:=$HOME/.lacale_cache.tsv}"
+    : "${TORRENT_PROVIDER:=transmission}"
+    : "${CAT_MOVIES:=}"
+    : "${CAT_SERIES:=}"
+    : "${LOG_FILE:=}"
+    : "${EXCLUDE_FILE:=}"
+    : "${MIN_QUALITY:=}"
+    : "${MAX_RETRIES:=3}"
+    : "${PATH_MAP:=}"
+    : "${UPLOAD_DELAY:=2}"
+    : "${SEARCH_DELAY:=0.3}"
+    : "${UPLOAD_METHOD:=internal}"
+    : "${BROWSER_UA:=Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0}"
+}
+
+# ---- Provider loading ----
+load_provider() {
+    local provider_file="${LACALE_DIR}/providers/${TORRENT_PROVIDER}.sh"
+    if [ ! -f "$provider_file" ]; then
+        die "Provider not found: $provider_file"
+    fi
+    source "$provider_file"
+}
+
+# ---- Uploader loading ----
+load_uploader() {
+    local uploader_file="${LACALE_DIR}/uploaders/${UPLOAD_METHOD}.sh"
+    if [ ! -f "$uploader_file" ]; then
+        die "Uploader not found: $uploader_file (available: internal, external)"
+    fi
+    source "$uploader_file"
+}
+
+# ---- Validate required config ----
+validate_config() {
+    local mode="${1:-all}"
+
+    [ -z "${LACALE_API_KEY:-}" ] && die "LACALE_API_KEY not set in config"
+    [ -z "${TRACKER_URL:-}" ] && die "TRACKER_URL not set in config"
+
+    if [ "$mode" = "movies" ] || [ "$mode" = "all" ]; then
+        [ -z "${RADARR_API_KEY:-}" ] && die "RADARR_API_KEY not set (required for movies)"
+    fi
+    if [ "$mode" = "series" ] || [ "$mode" = "all" ]; then
+        [ -z "${SONARR_API_KEY:-}" ] && die "SONARR_API_KEY not set (required for series)"
+    fi
+}
+
+# =============================================================================
+# COMMANDS
+# =============================================================================
+
+cmd_push() {
+    local mode="${1:-all}"
+    local max="${MAX_UPLOADS}"
+
+    # Parse flags
+    shift || true
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --max) max="$2"; shift 2 ;;
+            --max=*) max="${1#*=}"; shift ;;
+            --dry-run) DRY_RUN=true; shift ;;
+            --min-quality) MIN_QUALITY="$2"; shift 2 ;;
+            --min-quality=*) MIN_QUALITY="${1#*=}"; shift ;;
+            *) shift ;;
+        esac
+    done
+    MAX_UPLOADS="$max"
+
+    validate_config "$mode"
+    check_dependencies
+    init_workdir
+    load_notifiers
+
+    if [ "$DRY_RUN" = true ]; then
+        log "============================================"
+        log "  cale-push v${LACALE_VERSION} [DRY-RUN]"
+        log "  Mode: $mode | Max: $MAX_UPLOADS"
+        log "============================================"
+    else
+        load_uploader
+        uploader_check
+        load_provider
+        provider_check
+        log "============================================"
+        log "  cale-push v${LACALE_VERSION}"
+        log "  Mode: $mode | Max: $MAX_UPLOADS | Uploader: $UPLOAD_METHOD | Provider: $TORRENT_PROVIDER"
+        log "============================================"
+    fi
+
+    verify_api_key
+
+    if [ "$DRY_RUN" != true ] && ! check_upload_slot; then
+        log "No upload slot available. Exiting."
+        exit 0
+    fi
+
+    # --- MOVIES ---
+    if [ "$mode" = "movies" ] || [ "$mode" = "all" ]; then
+        log ""
+        log "=== MOVIES (Radarr) ==="
+        local movies_json="$WORK_DIR/movies.json"
+        fetch_radarr_movies "$movies_json"
+
+        local total
+        total=$(jq '[.[] | select(.hasFile==true)] | length' "$movies_json")
+        log "Movies with file: $total"
+
+        # Pass 1: unique (not on La Cale at all)
+        log ""
+        log "--- Pass 1: unique content (not on La Cale) ---"
+        PASS_MODE="unique"
+        while IFS= read -r movie; do
+            [ "$UPLOADED" -ge "$MAX_UPLOADS" ] && break
+            process_movie "$movie" || true
+        done < <(jq -c '.[] | select(.hasFile==true and .movieFile != null)' "$movies_json")
+
+        # Pass 2: alternative releases
+        if [ "$UPLOADED" -lt "$MAX_UPLOADS" ]; then
+            log ""
+            log "--- Pass 2: alternative releases ---"
+            PASS_MODE="all"
+            while IFS= read -r movie; do
+                [ "$UPLOADED" -ge "$MAX_UPLOADS" ] && break
+                process_movie "$movie" || true
+            done < <(jq -c '.[] | select(.hasFile==true and .movieFile != null)' "$movies_json")
+        fi
+    fi
+
+    # --- SERIES ---
+    if [ "$mode" = "series" ] || [ "$mode" = "all" ]; then
+        log ""
+        log "=== SERIES (Sonarr) ==="
+        local series_file="$WORK_DIR/series.json"
+        fetch_sonarr_series "$series_file"
+
+        local total
+        total=$(jq 'length' "$series_file")
+        log "Series: $total"
+
+        log ""
+        log "--- Pass 1: unique content (not on La Cale) ---"
+        PASS_MODE="unique"
+        while IFS= read -r series; do
+            [ "$UPLOADED" -ge "$MAX_UPLOADS" ] && break
+            local series_id
+            series_id=$(echo "$series" | jq -r '.id')
+            local episodes
+            episodes=$(fetch_sonarr_episodes "$series_id")
+
+            while IFS= read -r ep; do
+                [ "$UPLOADED" -ge "$MAX_UPLOADS" ] && break
+                process_episode "$ep" "$series" || true
+            done < <(echo "$episodes" | jq -c '.[] | select(.hasFile==true and .episodeFile != null)')
+        done < <(jq -c '.[]' "$series_file")
+
+        if [ "$UPLOADED" -lt "$MAX_UPLOADS" ]; then
+            log ""
+            log "--- Pass 2: alternative releases ---"
+            PASS_MODE="all"
+            while IFS= read -r series; do
+                [ "$UPLOADED" -ge "$MAX_UPLOADS" ] && break
+                local series_id
+                series_id=$(echo "$series" | jq -r '.id')
+                local episodes
+                episodes=$(fetch_sonarr_episodes "$series_id")
+
+                while IFS= read -r ep; do
+                    [ "$UPLOADED" -ge "$MAX_UPLOADS" ] && break
+                    process_episode "$ep" "$series" || true
+                done < <(echo "$episodes" | jq -c '.[] | select(.hasFile==true and .episodeFile != null)')
+            done < <(jq -c '.[]' "$series_file")
+        fi
+    fi
+
+    log ""
+    log "============================================"
+    log "  DONE: $UPLOADED uploaded, $SKIPPED skipped, $ERRORS errors"
+    log "============================================"
+
+    # Send summary notification if any uploads happened or errors occurred
+    if [ "$UPLOADED" -gt 0 ] || [ "$ERRORS" -gt 0 ]; then
+        notify_run_summary
+    fi
+}
+
+cmd_scan() {
+    local mode="${1:-all}"
+    validate_config "$mode"
+    check_dependencies
+    init_workdir
+
+    log "Scanning for upload candidates..."
+    verify_api_key
+
+    if [ "$mode" = "movies" ] || [ "$mode" = "all" ]; then
+        log ""
+        log "=== MOVIES (Radarr) ==="
+        local movies_json="$WORK_DIR/movies.json"
+        fetch_radarr_movies "$movies_json"
+
+        local total unique=0 alt=0
+        total=$(jq '[.[] | select(.hasFile==true)] | length' "$movies_json")
+        log "Movies with file: $total"
+        log ""
+
+        while IFS= read -r movie; do
+            local title year tmdb_id filename quality_name
+            title=$(echo "$movie" | jq -r '.title')
+            year=$(echo "$movie" | jq -r '.year')
+            tmdb_id=$(echo "$movie" | jq -r '.tmdbId // ""')
+            filename=$(echo "$movie" | jq -r '.movieFile.path' | xargs -I{} basename "{}")
+            quality_name=$(echo "$movie" | jq -r '.movieFile.quality.quality.name // ""')
+
+            if grep -qiF "$title" "$HISTORY_FILE" 2>/dev/null; then
+                continue
+            fi
+
+            local count
+            count=$(count_releases_lacale "$tmdb_id" "$title")
+
+            if [ "$count" -eq 0 ]; then
+                unique=$((unique+1))
+                printf "  [UNIQUE] %s (%s) [TMDB:%s] %s\n" "$title" "$year" "$tmdb_id" "$quality_name"
+            else
+                alt=$((alt+1))
+                printf "  [ALT +%d] %s (%s) [TMDB:%s] %s\n" "$count" "$title" "$year" "$tmdb_id" "$quality_name"
+            fi
+
+
+
+        done < <(jq -c '.[] | select(.hasFile==true and .movieFile != null)' "$movies_json")
+
+        log ""
+        log "Movies: $unique unique candidates, $alt alternative releases"
+    fi
+
+    if [ "$mode" = "series" ] || [ "$mode" = "all" ]; then
+        log ""
+        log "=== SERIES (Sonarr) ==="
+        local series_file="$WORK_DIR/series.json"
+        fetch_sonarr_series "$series_file"
+
+        local total
+        total=$(jq 'length' "$series_file")
+        log "Series: $total"
+
+        while IFS= read -r series; do
+            local title tvdb_id
+            title=$(echo "$series" | jq -r '.title')
+            tvdb_id=$(echo "$series" | jq -r '.tvdbId // ""')
+
+            local count
+            count=$(count_releases_lacale "$tvdb_id" "$title")
+
+            if [ "$count" -eq 0 ]; then
+                printf "  [UNIQUE] %s [TVDB:%s]\n" "$title" "$tvdb_id"
+            else
+                printf "  [ALT +%d] %s [TVDB:%s]\n" "$count" "$title" "$tvdb_id"
+            fi
+
+
+
+        done < <(jq -c '.[]' "$series_file")
+    fi
+}
+
+cmd_search() {
+    local query="${1:-}"
+    [ -z "$query" ] && die "Usage: cale-push search <tmdb_id|title>"
+
+    validate_config
+    init_workdir
+
+    local count
+    if [[ "$query" =~ ^[0-9]+$ ]]; then
+        log "Searching TMDB ID: $query"
+        count=$(count_releases_lacale_fresh "$query" "")
+    else
+        log "Searching title: $query"
+        count=$(count_releases_lacale_fresh "" "$query")
+    fi
+
+    if [ "$count" -eq 0 ]; then
+        log "NOT on La Cale — candidate for upload"
+    else
+        log "Found $count release(s) on La Cale"
+    fi
+
+    local results
+    if [[ "$query" =~ ^[0-9]+$ ]]; then
+        results=$(curl -sf --max-time 15 \
+            -H "X-Api-Key: ${LACALE_API_KEY}" \
+            "${LACALE_URL}/api/external?tmdbId=${query}" 2>/dev/null)
+    else
+        local encoded
+        encoded=$(printf '%s' "$query" | sed 's/ /+/g')
+        results=$(curl -sf --max-time 15 \
+            -H "X-Api-Key: ${LACALE_API_KEY}" \
+            "${LACALE_URL}/api/external?q=${encoded}" 2>/dev/null)
+    fi
+
+    if [ -n "$results" ] && [ "$(echo "$results" | jq 'length')" -gt 0 ]; then
+        echo "$results" | jq -r '.[] | "  - \(.title // "?") [\(.size // 0 | . / 1073741824 * 100 | round / 100) GB]"'
+    fi
+}
+
+cmd_preview() {
+    local filename="${1:-}"
+    [ -z "$filename" ] && die "Usage: cale-push preview <filename>"
+
+    local fn_base
+    fn_base=$(basename "$filename")
+    local quality="" codec="" audio="" dyn="" group=""
+
+    local fn_up
+    fn_up=$(echo "$fn_base" | tr '[:lower:]' '[:upper:]')
+
+    case "$fn_up" in *2160*|*4K*) quality="2160p" ;; *1080*) quality="1080p" ;; *720*) quality="720p" ;; esac
+    case "$fn_up" in *X265*|*H265*|*HEVC*) codec="x265" ;; *X264*|*H264*) codec="x264" ;; *AV1*) codec="AV1" ;; esac
+    case "$fn_up" in *TRUEHD*) audio="TrueHD" ;; *EAC3*|*DDP*) audio="EAC3" ;; *AC3*) audio="AC3" ;; *DTS*) audio="DTS" ;; *AAC*) audio="AAC" ;; esac
+    case "$fn_up" in *HDR*) dyn="HDR" ;; esac
+    group=$(echo "$fn_base" | sed 's/\.[^.]*$//' | grep -oE '\-[A-Za-z0-9]+$' | tr -d '-')
+
+    local title_part year_part
+    year_part=$(echo "$fn_base" | grep -oE '(19|20)[0-9]{2}' | head -1)
+    title_part=$(echo "$fn_base" | sed "s/[.(]${year_part}.*//" | sed 's/\./ /g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+    [ -z "$title_part" ] && title_part=$(echo "$fn_base" | sed 's/\.[^.]*$//' | sed 's/\./ /g')
+
+    local result
+    result=$(build_release_name "$title_part" "${year_part:-0000}" "$fn_base" \
+        "$quality" "$codec" "" "$dyn" "${group:-NOGRP}" "$audio")
+
+    echo "Input:   $fn_base"
+    echo "Output:  $result"
+}
+
+cmd_install() {
+    local script_path
+    script_path="$(cd "${LACALE_DIR}" && pwd)/cale-push"
+    local mode="${1:-movies}"
+
+    log "Installing systemd service for user: $(whoami)"
+
+    mkdir -p "$HOME/.config/systemd/user"
+
+    cat > "$HOME/.config/systemd/user/cale-push.service" << EOF
+[Unit]
+Description=cale-push - Auto upload to La Cale
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash ${script_path} push ${mode}
+TimeoutStartSec=1800
+EOF
+
+    cat > "$HOME/.config/systemd/user/cale-push.timer" << EOF
+[Unit]
+Description=cale-push timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user enable cale-push.timer
+    systemctl --user start cale-push.timer
+
+    log "Installed and started cale-push.timer"
+    log "  Status:  systemctl --user status cale-push.timer"
+    log "  Logs:    journalctl --user -u cale-push -f"
+    log "  Remove:  ./cale-push uninstall"
+}
+
+cmd_uninstall() {
+    log "Removing systemd service..."
+    systemctl --user stop cale-push.timer 2>/dev/null || true
+    systemctl --user disable cale-push.timer 2>/dev/null || true
+    rm -f "$HOME/.config/systemd/user/cale-push.service"
+    rm -f "$HOME/.config/systemd/user/cale-push.timer"
+    systemctl --user daemon-reload
+    log "Service removed."
+}
+
+cmd_update() {
+    log "Checking for updates..."
+
+    if [ ! -d "${LACALE_DIR}/.git" ]; then
+        die "Not a git repository. Clone the repo to use auto-update."
+    fi
+
+    cd "$LACALE_DIR"
+
+    local remote
+    remote=$(git remote | head -1)
+    git fetch "$remote" --tags 2>/dev/null || die "Failed to fetch updates"
+
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+    local local_hash remote_hash
+    local_hash=$(git rev-parse HEAD)
+    remote_hash=$(git rev-parse "${remote}/${current_branch}" 2>/dev/null || echo "")
+
+    [ -z "$remote_hash" ] && die "Could not find remote branch: ${remote}/${current_branch}"
+
+    if [ "$local_hash" = "$remote_hash" ]; then
+        log "Already up to date (v${LACALE_VERSION})"
+        local latest_tag
+        latest_tag=$(git tag -l 'v*' --sort=-version:refname | head -1)
+        [ -n "$latest_tag" ] && log "Latest release: $latest_tag"
+        return
+    fi
+
+    local behind
+    behind=$(git rev-list --count HEAD.."${remote}/${current_branch}")
+    log "  $behind new commit(s) available"
+
+    git pull "$remote" "$current_branch" --ff-only 2>&1 || {
+        err "Fast-forward pull failed. You may have local changes."
+        err "Run 'cd $LACALE_DIR && git pull' manually."
+        return 1
+    }
+
+    local new_version
+    new_version=$(grep -oP 'LACALE_VERSION="\K[^"]+' "${LACALE_DIR}/cale-push" 2>/dev/null || echo "unknown")
+    log "Updated to v${new_version}"
+}
+
+cmd_status() {
+    echo "cale-push v${LACALE_VERSION}"
+    echo ""
+
+    if [ -f "$HISTORY_FILE" ]; then
+        local count
+        count=$(wc -l < "$HISTORY_FILE")
+        echo "Uploaded: $count releases"
+        if [ "$count" -gt 0 ]; then
+            echo "Last 5:"
+            tail -5 "$HISTORY_FILE" | sed 's/^/  /'
+        fi
+    else
+        echo "Uploaded: 0 (no history file)"
+    fi
+
+    echo ""
+    if [ -f "$CACHE_FILE" ]; then
+        local cache_count
+        cache_count=$(wc -l < "$CACHE_FILE")
+        echo "Cache: $cache_count entries"
+    else
+        echo "Cache: empty"
+    fi
+
+    echo ""
+    if systemctl --user is-active cale-push.timer >/dev/null 2>&1; then
+        echo "Timer: active"
+        systemctl --user status cale-push.timer --no-pager 2>/dev/null | grep -E 'Active:|Trigger:' | sed 's/^/  /'
+    else
+        echo "Timer: not installed (run './cale-push install' to set up)"
+    fi
+}
+
+cmd_check() {
+    local ok=true
+
+    echo "cale-push v${LACALE_VERSION} - Configuration check"
+    echo ""
+
+    # Config file
+    printf "Config: "
+    if [ -f "$HOME/.config/lacale/config" ]; then
+        echo "OK ($HOME/.config/lacale/config)"
+    elif [ -f "${LACALE_DIR}/config.local" ]; then
+        echo "OK (${LACALE_DIR}/config.local)"
+    else
+        echo "MISSING"; ok=false
+    fi
+
+    # Dependencies
+    printf "Dependencies: "
+    local missing=()
+    for cmd in curl jq mktorrent mediainfo; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    if [ ${#missing[@]} -eq 0 ]; then
+        echo "OK (curl, jq, mktorrent, mediainfo)"
+    else
+        echo "MISSING: ${missing[*]}"; ok=false
+    fi
+
+    # La Cale API
+    printf "La Cale API: "
+    if [ -n "${LACALE_API_KEY:-}" ]; then
+        local api_test
+        api_test=$(curl -sf --max-time 10 \
+            -H "X-Api-Key: ${LACALE_API_KEY}" \
+            "${LACALE_URL}/api/external?q=test" 2>/dev/null)
+        if [ -n "$api_test" ]; then
+            echo "OK"
+        else
+            echo "FAILED (check LACALE_API_KEY and LACALE_URL)"; ok=false
+        fi
+    else
+        echo "NOT CONFIGURED (LACALE_API_KEY empty)"; ok=false
+    fi
+
+    # Tracker URL
+    printf "Tracker URL: "
+    if [ -n "${TRACKER_URL:-}" ]; then
+        echo "OK"
+    else
+        echo "NOT SET"; ok=false
+    fi
+
+    # Radarr
+    printf "Radarr: "
+    if [ -n "${RADARR_API_KEY:-}" ]; then
+        local radarr_test
+        radarr_test=$(curl -sf --max-time 10 -H "X-Api-Key: $RADARR_API_KEY" \
+            "${RADARR_URL}/api/v3/system/status" 2>/dev/null)
+        if [ -n "$radarr_test" ]; then
+            local radarr_ver
+            radarr_ver=$(echo "$radarr_test" | jq -r '.version // "?"' 2>/dev/null)
+            echo "OK (v${radarr_ver} at ${RADARR_URL})"
+        else
+            echo "FAILED (check RADARR_URL and RADARR_API_KEY)"; ok=false
+        fi
+    else
+        echo "NOT CONFIGURED (optional)"
+    fi
+
+    # Sonarr
+    printf "Sonarr: "
+    if [ -n "${SONARR_API_KEY:-}" ]; then
+        local sonarr_test
+        sonarr_test=$(curl -sf --max-time 10 -H "X-Api-Key: $SONARR_API_KEY" \
+            "${SONARR_URL}/api/v3/system/status" 2>/dev/null)
+        if [ -n "$sonarr_test" ]; then
+            local sonarr_ver
+            sonarr_ver=$(echo "$sonarr_test" | jq -r '.version // "?"' 2>/dev/null)
+            echo "OK (v${sonarr_ver} at ${SONARR_URL})"
+        else
+            echo "FAILED (check SONARR_URL and SONARR_API_KEY)"; ok=false
+        fi
+    else
+        echo "NOT CONFIGURED (optional)"
+    fi
+
+    # Uploader method
+    printf "Upload method: "
+    local uploader_file="${LACALE_DIR}/uploaders/${UPLOAD_METHOD}.sh"
+    if [ -f "$uploader_file" ]; then
+        echo "OK (${UPLOAD_METHOD})"
+    else
+        echo "MISSING ($uploader_file)"; ok=false
+    fi
+
+    # Torrent provider
+    printf "Torrent provider: "
+    local provider_file="${LACALE_DIR}/providers/${TORRENT_PROVIDER}.sh"
+    if [ -f "$provider_file" ]; then
+        echo "OK (${TORRENT_PROVIDER})"
+    else
+        echo "MISSING ($provider_file)"; ok=false
+    fi
+
+    # Notifications
+    printf "Notifications: "
+    if [ -n "${NOTIFY_ENABLED:-}" ]; then
+        echo "${NOTIFY_ENABLED}"
+    else
+        echo "disabled"
+    fi
+
+    # Exclude file
+    if [ -n "${EXCLUDE_FILE:-}" ]; then
+        printf "Exclude file: "
+        if [ -f "$EXCLUDE_FILE" ]; then
+            local exc_count
+            exc_count=$(wc -l < "$EXCLUDE_FILE")
+            echo "OK ($exc_count entries)"
+        else
+            echo "NOT FOUND ($EXCLUDE_FILE)"
+        fi
+    fi
+
+    # Log file
+    if [ -n "${LOG_FILE:-}" ]; then
+        printf "Log file: %s\n" "$LOG_FILE"
+    fi
+
+    echo ""
+    if $ok; then
+        echo "All checks passed."
+    else
+        echo "Some checks failed. Fix the issues above before using push."
+        return 1
+    fi
+}
+
+cmd_help() {
+    cat << 'EOF'
+cale-push - Scan your Radarr/Sonarr library and push to La Cale
+
+USAGE:
+    ./cale-push <command> [options]
+
+COMMANDS:
+    push [movies|series|all] [--max N] [--dry-run] [--min-quality Q]
+        Push content to La Cale. Unique content first (not yet on
+        La Cale), then alternative releases. Default: all, max 5.
+        --dry-run: simulate without uploading or creating torrents
+        --min-quality: only push 720p, 1080p, or 2160p and above
+
+    scan [movies|series|all]
+        List candidates without uploading.
+        Shows which content is unique vs already on La Cale.
+
+    check
+        Validate config and test connectivity to all services.
+
+    search <tmdb_id|title>
+        Search La Cale for a specific movie or series.
+
+    preview <filename>
+        Preview the release name that would be generated for a file.
+
+    install [movies|series|all]
+        Install a systemd user timer (runs every 10 min).
+
+    uninstall
+        Remove the systemd timer.
+
+    update
+        Update to the latest version (git pull).
+
+    status
+        Show upload history, cache stats, and timer status.
+
+    version
+        Show current version.
+
+    help
+        Show this help message.
+
+CONFIGURATION:
+    Copy config.example to ~/.config/lacale/config
+    Or place a config.local next to the script.
+    Or set LACALE_CONFIG=/path/to/config as env variable.
+
+PROVIDERS:
+    Torrent client providers live in providers/
+    Set TORRENT_PROVIDER in your config (default: transmission).
+    Available: transmission, qbittorrent.
+    See providers/example.sh to create your own.
+
+NOTIFICATIONS:
+    Notifiers live in notifiers/
+    Set NOTIFY_ENABLED in your config (comma-separated).
+    Available: discord, email, telegram.
+    See notifiers/example.sh to create your own.
+
+EXAMPLES:
+    ./cale-push check                    # Validate setup
+    ./cale-push scan movies              # List movie candidates
+    ./cale-push push movies --max 1      # Push 1 movie
+    ./cale-push push all --dry-run       # Simulate a full run
+    ./cale-push push movies --min-quality 1080p  # Only 1080p+
+    ./cale-push search 257088            # Search by TMDB ID
+    ./cale-push search "Inception"       # Search by title
+    ./cale-push preview "Movie.2024.MULTi.1080p.BluRay.x264-GRP.mkv"
+    ./cale-push install movies           # Auto-push every 10min
+    ./cale-push update                   # Update to latest version
+EOF
+}
+
+# =============================================================================
+# MAIN
+# =============================================================================
+main() {
+    local cmd="${1:-help}"
+    shift || true
+
+    for arg in "$@"; do
+        case "$arg" in
+            --config=*) LACALE_CONFIG="${arg#*=}" ;;
+        esac
+    done
+
+    case "$cmd" in
+        help|--help|-h)
+            cmd_help; return ;;
+        version|--version|-v)
+            echo "cale-push v${LACALE_VERSION}"; return ;;
+        preview)
+            cmd_preview "$@"; return ;;
+    esac
+
+    load_config
+
+    case "$cmd" in
+        push)      cmd_push "$@" ;;
+        scan)      cmd_scan "$@" ;;
+        search)    cmd_search "$@" ;;
+        check)     cmd_check ;;
+        install)   cmd_install "$@" ;;
+        uninstall) cmd_uninstall ;;
+        update)    cmd_update ;;
+        status)    cmd_status ;;
+        *)         err "Unknown command: $cmd"; cmd_help; exit 1 ;;
+    esac
+}
+
+main "$@"
