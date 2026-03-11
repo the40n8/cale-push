@@ -354,10 +354,10 @@ Deux méthodes disponibles via `UPLOAD_METHOD` dans la config :
 
 | Méthode | Description | Prérequis |
 | --- | --- | --- |
-| `internal` | Login session email/password (défaut, fonctionne) | `LACALE_EMAIL`, `LACALE_PASSWORD` |
-| `external` | Clé API avec scope `upload:write` (en attente d'activation) | `LACALE_API_KEY` avec scope `upload:write` |
+| `external` | Clé API avec scope `upload:write` (défaut) | `LACALE_API_KEY` avec scope `upload:write` |
+| `internal` | Login session email/password (fallback) | `LACALE_EMAIL`, `LACALE_PASSWORD` |
 
-La méthode `internal` simule une session navigateur avec un PoW altcha — elle est utilisée par défaut car l'API externe n'est pas encore activée pour l'upload.
+La méthode `external` utilise l'API La Cale avec une clé API — c'est la méthode recommandée. La méthode `internal` simule une session navigateur avec un PoW altcha et peut servir de fallback.
 
 ## Notes techniques
 

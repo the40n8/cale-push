@@ -81,4 +81,4 @@ No test framework — test manually:
 - **Auth**: use `X-Api-Key` header (not query param) — see [API docs](https://la-cale.space/faq/api)
 - **Rate limiting**: upload 30/min max. Configurable via `UPLOAD_DELAY` and `SEARCH_DELAY`
 - **Category IDs**: resolved dynamically by each uploader (`/api/external/meta` or `/api/internal/categories`), fallback to `CAT_MOVIES`/`CAT_SERIES`
-- **Upload method**: `UPLOAD_METHOD=internal` (session login, works now) or `external` (API key, when available)
+- **Upload method**: `UPLOAD_METHOD=external` (API key, default) or `internal` (session login, fallback)

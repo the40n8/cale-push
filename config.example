@@ -17,9 +17,9 @@ TRACKER_URL=""              # Your personal announce URL with passkey
 # =============================================================================
 # UPLOAD METHOD
 # =============================================================================
-# "internal" : session login via email/password (works now, used by default)
-# "external" : external API with upload:write scope (use when available)
-UPLOAD_METHOD="internal"
+# "external" : external API with upload:write scope (default)
+# "internal" : session login via email/password (fallback)
+UPLOAD_METHOD="external"
 
 # Credentials for the internal uploader (session login)
 LACALE_EMAIL=""

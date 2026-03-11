@@ -58,7 +58,7 @@ load_config() {
     : "${PATH_MAP:=}"
     : "${UPLOAD_DELAY:=2}"
     : "${SEARCH_DELAY:=0.3}"
-    : "${UPLOAD_METHOD:=internal}"
+    : "${UPLOAD_METHOD:=external}"
     : "${BROWSER_UA:=Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0}"
 }
 
