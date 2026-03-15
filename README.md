@@ -4,7 +4,7 @@
 
 ---
 
-Scannez votre bibliothèque Radarr/Sonarr et poussez automatiquement vos contenus vers [La Cale](https://la-cale.space), tracker privé français.
+Scannez votre bibliothèque d'ISOs Linux et poussez automatiquement vos contenus vers [La Cale](https://la-cale.space), tracker privé français.
 
 Fortement inspiré du travail remarquable de [theolddispatch](https://github.com/theolddispatch/v2.0/) — réécrit et restructuré pour être modulaire, générique et utilisable par toute la communauté.
 
@@ -13,9 +13,15 @@ Fortement inspiré du travail remarquable de [theolddispatch](https://github.com
 > Ce projet n'a pas encore été testé dans tous ses scénarios (la limite d'upload en cours de développement nous a rattrapés).
 > Si vous l'utilisez et rencontrez des bugs ou des comportements inattendus, **les issues et merge requests sont très bienvenues** — c'est comme ça qu'on avance ensemble.
 
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/the40n8/cale-push/main/tools/install.sh)"
+```
+
+> Pas fan d'exécuter un script random depuis internet ? Pour les paranos comme moi &rarr; [installation manuelle](#installation-manuelle)
+
 ## Fonctionnalités
 
-- **Scan automatique** de votre bibliothèque Radarr (films) et Sonarr (séries)
+- **Scan automatique** de votre bibliothèque Radarr (ISOs Linux) et Sonarr (distributions en plusieurs volumes)
 - **Détection de doublons** par TMDB ID via l'API La Cale
 - **Priorité intelligente** : push d'abord les contenus absents, puis les releases alternatives
 - **Nommage conforme** aux [règles La Cale](docs/) (accents, ordre des tags, etc.)
@@ -48,13 +54,7 @@ sudo apt install curl jq mktorrent mediainfo
 
 ## Installation
 
-### One-liner (recommandé)
-
-```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/the40n8/cale-push/main/tools/install.sh)"
-```
-
-Clone le repo dans `~/.cale-push`, crée un lien dans `~/.local/bin`, et copie le template de config. L'installeur vérifie les dépendances et vous indique celles qui manquent.
+Le one-liner (en haut de ce README) clone le repo dans `~/.cale-push`, crée un lien dans `~/.local/bin`, et copie le template de config. L'installeur vérifie les dépendances et vous indique celles qui manquent.
 
 Personnalisable via des variables d'environnement :
 
@@ -63,7 +63,17 @@ CALE_PUSH_DIR="$HOME/.cale-push"   # Répertoire d'installation
 CALE_PUSH_BIN="$HOME/.local/bin"   # Répertoire pour le lien symbolique
 ```
 
-### Manuelle
+### Installation manuelle
+
+Vous pouvez inspecter le script avant de l'exécuter :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/the40n8/cale-push/main/tools/install.sh -o install.sh
+less install.sh   # inspecter
+sh install.sh
+```
+
+Ou tout faire à la main :
 
 ```bash
 git clone https://github.com/the40n8/cale-push.git ~/.cale-push
@@ -92,11 +102,11 @@ Copiez `config.example` vers `~/.config/lacale/config` et remplissez vos valeurs
 LACALE_API_KEY="votre_cle_api"
 TRACKER_URL="https://tracker.la-cale.space/announce?passkey=votre_passkey"
 
-# Radarr (obligatoire pour les films)
+# Radarr (obligatoire pour les ISOs)
 RADARR_URL="http://127.0.0.1:7878/radarr"
 RADARR_API_KEY="votre_cle_radarr"
 
-# Sonarr (obligatoire pour les séries)
+# Sonarr (obligatoire pour les distributions multi-volumes)
 SONARR_URL="http://127.0.0.1:8989/sonarr"
 SONARR_API_KEY="votre_cle_sonarr"
 
@@ -122,18 +132,18 @@ Un fichier `config.local` à côté du script permet des overrides locaux (ignor
 ./cale-push scan all
 
 # Pousser du contenu vers La Cale
-./cale-push push movies              # Films uniquement
-./cale-push push series --max 3      # Max 3 épisodes
-./cale-push push all                 # Films + séries
+./cale-push push movies              # ISOs uniquement
+./cale-push push series --max 3      # Max 3 volumes
+./cale-push push all                 # ISOs + distributions multi-volumes
 ./cale-push push all --dry-run       # Simulation sans upload
-./cale-push push movies --min-quality 1080p  # Uniquement 1080p+
+./cale-push push movies --min-quality 1080p  # Uniquement les ISOs en haute qualité
 
 # Chercher si un contenu existe sur La Cale
 ./cale-push search 257088            # Par TMDB ID
-./cale-push search "Inception"       # Par titre
+./cale-push search "Ubuntu 24.04"    # Par titre
 
 # Prévisualiser le nom de release généré
-./cale-push preview "Mon.Film.2024.MULTi.VFF.2160p.4KLight.BluRay.AC3.5.1.x265-GRP.mkv"
+./cale-push preview "Linux.Mint.2024.MULTi.VFF.2160p.4KLight.BluRay.AC3.5.1.x265-GRP.iso"
 
 # État (historique, cache, timer)
 ./cale-push status
@@ -190,8 +200,8 @@ docker build -t cale-push .
 # Commande one-shot
 docker run --rm \
     -v ./config:/config \
-    -v /chemin/films:/media/movies:ro \
-    -v /chemin/series:/media/tv:ro \
+    -v /chemin/isos:/media/movies:ro \
+    -v /chemin/distros:/media/tv:ro \
     -v /chemin/torrents:/torrents \
     cale-push push movies
 
@@ -218,7 +228,7 @@ echo "EXCLUDE_FILE=$HOME/.config/lacale/exclude" >> ~/.config/lacale/config
 echo "257088" >> ~/.config/lacale/exclude
 
 # Exclure par titre
-echo "Some Movie Title" >> ~/.config/lacale/exclude
+echo "Arch Linux 2024.01" >> ~/.config/lacale/exclude
 ```
 
 ### Logging fichier
