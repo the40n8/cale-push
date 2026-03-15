@@ -48,23 +48,32 @@ sudo apt install curl jq mktorrent mediainfo
 
 ## Installation
 
-```bash
-git clone https://github.com/the40n8/cale-push.git
-cd cale-push
+### One-liner (recommandé)
 
-# Configurer
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/the40n8/cale-push/main/tools/install.sh)"
+```
+
+Clone le repo dans `~/.cale-push`, crée un lien dans `~/.local/bin`, et copie le template de config. L'installeur vérifie les dépendances et vous indique celles qui manquent.
+
+Personnalisable via des variables d'environnement :
+
+```bash
+CALE_PUSH_DIR="$HOME/.cale-push"   # Répertoire d'installation
+CALE_PUSH_BIN="$HOME/.local/bin"   # Répertoire pour le lien symbolique
+```
+
+### Manuelle
+
+```bash
+git clone https://github.com/the40n8/cale-push.git ~/.cale-push
+ln -s ~/.cale-push/cale-push ~/.local/bin/cale-push
+
 mkdir -p ~/.config/lacale
-cp config.example ~/.config/lacale/config
+cp ~/.cale-push/config.example ~/.config/lacale/config
 nano ~/.config/lacale/config
 
-# Vérifier la configuration
-./cale-push check
-
-# Tester
-./cale-push scan movies
-
-# Activer l'autocomplétion (optionnel)
-echo "source $(pwd)/completions/cale-push.bash" >> ~/.bashrc
+cale-push check
 ```
 
 ## Mise à jour
@@ -338,6 +347,8 @@ cale-push/
 │   ├── email.sh                # Notifications email
 │   ├── telegram.sh             # Notifications Telegram (bot)
 │   └── example.sh              # Template pour nouveaux notifiers
+├── tools/
+│   └── install.sh              # One-liner installer
 ├── completions/
 │   └── cale-push.bash          # Bash completion
 ├── systemd/
