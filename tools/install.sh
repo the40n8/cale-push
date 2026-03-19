@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  cale-push installer
-#  Usage: sh -c "$(curl -fsSL https://raw.githubusercontent.com/the40n8/cale-push/main/tools/install.sh)"
+#  Usage: bash -c "$(curl -fsSL https://raw.githubusercontent.com/the40n8/cale-push/main/tools/install.sh)"
 # =============================================================================
 set -euo pipefail
 

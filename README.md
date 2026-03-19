@@ -14,7 +14,7 @@ Fortement inspiré du travail remarquable de [theolddispatch](https://github.com
 > Si vous l'utilisez et rencontrez des bugs ou des comportements inattendus, **les issues et merge requests sont très bienvenues** — c'est comme ça qu'on avance ensemble.
 
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/the40n8/cale-push/main/tools/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/the40n8/cale-push/main/tools/install.sh)"
 ```
 
 > Pas fan d'exécuter un script random depuis internet ? Pour les paranos comme moi &rarr; [installation manuelle](#installation-manuelle)
@@ -70,7 +70,7 @@ Vous pouvez inspecter le script avant de l'exécuter :
 ```bash
 curl -fsSL https://raw.githubusercontent.com/the40n8/cale-push/main/tools/install.sh -o install.sh
 less install.sh   # inspecter
-sh install.sh
+bash install.sh
 ```
 
 Ou tout faire à la main :
