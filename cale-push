@@ -8,7 +8,7 @@
 set -euo pipefail
 
 LACALE_VERSION="0.1.0"
-LACALE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LACALE_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # ---- Source libraries ----
 for lib in core cache naming tags api radarr sonarr notify; do
@@ -259,7 +259,7 @@ cmd_scan() {
             title=$(echo "$movie" | jq -r '.title')
             year=$(echo "$movie" | jq -r '.year')
             tmdb_id=$(echo "$movie" | jq -r '.tmdbId // ""')
-            filename=$(echo "$movie" | jq -r '.movieFile.path' | xargs -I{} basename "{}")
+            filename=$(basename "$(echo "$movie" | jq -r '.movieFile.path')")
             quality_name=$(echo "$movie" | jq -r '.movieFile.quality.quality.name // ""')
 
             if grep -qiF "$title" "$HISTORY_FILE" 2>/dev/null; then
