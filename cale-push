@@ -576,7 +576,9 @@ cmd_check() {
 
     # Config file
     printf "Config: "
-    if [ -f "$HOME/.config/lacale/config" ]; then
+    if [ -n "${LACALE_CONFIG:-}" ] && [ -f "$LACALE_CONFIG" ]; then
+        echo "OK ($LACALE_CONFIG)"
+    elif [ -f "$HOME/.config/lacale/config" ]; then
         echo "OK ($HOME/.config/lacale/config)"
     elif [ -f "${LACALE_DIR}/config.local" ]; then
         echo "OK (${LACALE_DIR}/config.local)"
