@@ -30,7 +30,10 @@ esac
 new="${major}.${minor}.${patch_v}"
 
 # ---- Update script ----
-sed -i'' "s/^LACALE_VERSION=\".*\"/LACALE_VERSION=\"${new}\"/" "$MAIN_SCRIPT"
+tmp=$(mktemp)
+sed "s/^LACALE_VERSION=\".*\"/LACALE_VERSION=\"${new}\"/" "$MAIN_SCRIPT" > "$tmp"
+mv "$tmp" "$MAIN_SCRIPT"
+chmod +x "$MAIN_SCRIPT"
 
 echo "${current} → ${new}"
 
