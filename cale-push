@@ -7,7 +7,7 @@
 # =============================================================================
 set -euo pipefail
 
-LACALE_VERSION="0.1.0"
+LACALE_VERSION="0.2.0"
 LACALE_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # ---- Source libraries ----
@@ -530,7 +530,7 @@ cmd_update() {
     }
 
     local new_version
-    new_version=$(grep -oP 'LACALE_VERSION="\K[^"]+' "${LACALE_DIR}/cale-push" 2>/dev/null || echo "unknown")
+    new_version=$(sed -n 's/^LACALE_VERSION="\(.*\)"/\1/p' "${LACALE_DIR}/cale-push" 2>/dev/null || echo "unknown")
     log "Updated to v${new_version}"
 }
 
