@@ -7,7 +7,7 @@
 # =============================================================================
 set -euo pipefail
 
-LACALE_VERSION="0.2.0"
+LACALE_VERSION="0.2.1"
 LACALE_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # ---- Source libraries ----
