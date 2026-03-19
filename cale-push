@@ -102,6 +102,7 @@ validate_config() {
 cmd_push() {
     local mode="${1:-all}"
     local max="${MAX_UPLOADS}"
+    local DRY_RUN=false
 
     # Parse flags
     shift || true
